@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/EMProfiler" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>
