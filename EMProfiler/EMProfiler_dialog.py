@@ -27,9 +27,10 @@ import csv
 import os
 import math
 from matplotlib.backends.backend_pdf import PdfPages
+import sys
 
 from PyQt4 import QtGui, uic
-
+sys.excepthook = sys.__excepthook__
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'EMProfiler_dialog_base.ui'))
 
@@ -45,10 +46,11 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
         
-        #initialise parameters THIS MAY NOW BE OBSOLETE
+       
         self.datafile = None
         self.delimiter = "comma"
         self.headerdict = {}
+         #initialise parameters THIS MAY NOW BE OBSOLETE
         self.outfilepath = None
         self.outfileDir = None
         self.outfileBase = None
@@ -89,6 +91,7 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.btnLoadInfo.clicked.connect(self.loadInfo)
         self.btnAddCh.clicked.connect(self.addChannels)
         self.btnRemCh.clicked.connect(self.remChannels)
+        self.btnCreateProf.clicked.connect(self.makeProfiles)
         
         #Connect GUI elements with profiler parameters
         self.ledInput.textChanged.connect(lambda: self.setVariables(self.profiler, "datafile", self.ledInput.text()))
@@ -106,9 +109,14 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.cbxLinecol.currentIndexChanged.connect(lambda:self.setVariables(self.profiler, "lineColour", self.cbxLinecol.currentText()))
         self.rbnComma.toggled.connect(lambda:self.setVariables(self.profiler, "delimiter", self.rbnComma.isChecked()))
         self.rbnSingle.toggled.connect(lambda:self.setVariables(self.profiler, "outstyle", self.rbnSingle.isChecked()))
+        self.chkDTM.toggled.connect(lambda:self.setVariables(self.profiler, "plotDTM", self.chkDTM.isChecked()))
+        self.chkMag.toggled.connect(lambda:self.setVariables(self.profiler, "plotMag", self.chkMag.isChecked()))
+        self.chkLoopheight.toggled.connect(lambda:self.setVariables(self.profiler, "plotLoopheight", self.chkLoopheight.isChecked()))
+        self.chkHilite.toggled.connect(lambda:self.setVariables(self.profiler, "hiliteCh", self.chkHilite.isChecked()))
+        self.rbnRadar.toggled.connect(lambda:self.setVariables(self.profiler, "heightfromAltimeter", self.rbnRadar.isChecked()))
         
     def loadInfo(self):
-        pass
+
         #open and read header data
         csvfile = open(self.datafile, 'rb')
         if self.delimiter == "comma":
@@ -124,12 +132,13 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.headerdict = headerdict
         needsheaders = [self.lstAvailCh, self.cbxLine,
                         self.cbxCoord, self.cbxDTM,
-                        self.cbxLoopheight, self.cbxMag
+                        self.cbxLoopHeight, self.cbxMag
                         ]
         #populate comboboxes and lists
+        for tars in needsheaders:
+                tars.clear()
         for keys in self.headerdict:
             for tars in needsheaders:
-                tars.clear()
                 tars.addItem(keys)
                 
     def addChannels(self):
@@ -142,27 +151,30 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         
     def listMover(self, source, target):
         for item in source.selectedItems():
-            target.addItem(source.takeItem(target.row(item)))
+            target.addItem(source.takeItem(source.row(item)))
             
     def updateChannelList(self):
         templist = []
         for i in xrange(self.lstSelCh.count()):
             templist.append(self.lstSelCh.item(i).text())
             
-        self.channelIdx = []
+        self.profiler.channelIdx = []
         for j in templist:
-            self.channelIdx.append(self.headerdict[j])
-            
+            self.profiler.channelIdx.append(self.headerdict[j])
+        self.profiler.channelIdx.sort()
+                    
     def setVariables(self, target, variable, value):
-        pass
         try:
             if variable == "datafile":
                 target.datafile = os.path.normpath(value)
+                self.datafile = os.path.normpath(value)
             elif variable == "delimiter":
                 if value:
                     target.delimiter = "comma"
+                    self.delimiter = "comma"
                 else:
                     target.delimiter = "space"
+                    self.delimiter = "space"
             elif variable == "outstyle":
                 if value:
                     target.singleoutput = True
@@ -194,6 +206,17 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
                 target.yLab = value
             elif variable == "xlabel":
                 target.xLab = value
+            elif variable == "plotDTM":
+                target.plotDTM = value
+            elif variable == "plotLoopheight":
+                target.plotLoopheight = value
+            elif variable == "plotMag":
+                target.plotMag = value
+            elif variable == "hiliteCh":
+                target.hiliteCh = value
+            elif variable == "heightfromAltimeter":
+                target.heightfromAltimeter = value
+                
         except ValueError:
             pass
             
@@ -210,7 +233,7 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
             
     def makeProfiles(self):
         #run the code to generate profiles
-        pass
+        self.profiler.run()
     
 class ProfileMaker:
 
@@ -251,6 +274,7 @@ class ProfileMaker:
         self.readingMax = None
         self.dtmMax = None
         self.magMax = None
+        self.loopMax = None
         
         
     def run(self):
@@ -273,7 +297,12 @@ class ProfileMaker:
             self.makeArrays(firstdata)
                        
             for row in csvreader:
-             
+            
+                if self.plotLoopheight:
+                    if self.heightfromAltimeter:
+                        if not self.plotDTM:
+                            self.plotLoopheight = False
+                            
                 line = row[self.lineIdx]
                 #print row[0]
                 #rint float(row[0])
@@ -288,7 +317,11 @@ class ProfileMaker:
                     if self.plotDTM:
                         self.DTM = np.append(self.DTM, [float(row[self.DTMIdx])])
                     if self.plotLoopheight:
-                        self.loopHeight = np.append(self.loopHeight, [float(row[self.loopheightIdx])])
+                        if self.heightfromAltimeter:
+                            height = (float(row[self.loopheightIdx])) + (float(row[self.DTMIdx]))
+                            self.loopHeight = np.append(self.loopHeight, [height])
+                        else:
+                            self.loopHeight = np.append(self.loopHeight, [float(row[self.loopheightIdx])])
                     if self.plotMag:
                         self.mag = np.append(self.mag, [float(row[self.magIdx])])
                 else:
@@ -397,20 +430,26 @@ class ProfileMaker:
         
     def findMax(self):
         
-        with open(datafile, "r") as csvfile:
+        with open(self.datafile, "r") as csvfile:
             next(csvfile)
             csvreader = csv.reader(csvfile)
             for row in csvreader:
                 channels = self.convertChannels([row[i] for i in self.channelIdx])
-                val = max(channels)
+                val = max(channels)[0]
                 if val > self.readingMax:
                     self.readingMax = val
-                dtmVal = float(row[self.DTMIdx])
-                if dtmVal > self.dtmMax:
-                    self.dtmMax = dtmVal
-                magVal = float(row[self.magIdx])
-                if magVal > self.magMax:
-                    self.magMax = magVal
+                if self.plotDTM:
+                    dtmVal = float(row[self.DTMIdx])
+                    if dtmVal > self.dtmMax:
+                        self.dtmMax = dtmVal
+                if self.plotMag:
+                    magVal = float(row[self.magIdx])
+                    if magVal > self.magMax:
+                        self.magMax = magVal
+                if self.plotLoopheight:
+                    lphVal = float(row[self.loopheightIdx])
+                    if lphVal > self.loopMax:
+                        self.loopMax = lphVal
                   
             csvfile.close()
-    
+        
