@@ -203,7 +203,7 @@
      <string>...</string>
     </property>
    </widget>
-   <widget class="QPushButton" name="btnOtdirbrow">
+   <widget class="QPushButton" name="btnOutdirbrow">
     <property name="enabled">
      <bool>false</bool>
     </property>
@@ -371,7 +371,7 @@
      <enum>QAbstractItemView::ExtendedSelection</enum>
     </property>
    </widget>
-   <widget class="QListWidget" name="lstChannels">
+   <widget class="QListWidget" name="lstSelCh">
     <property name="geometry">
      <rect>
       <x>180</x>
@@ -646,7 +646,7 @@
   <tabstop>rbnMultifile</tabstop>
   <tabstop>ledBasename</tabstop>
   <tabstop>btnOutfilebrow</tabstop>
-  <tabstop>btnOtdirbrow</tabstop>
+  <tabstop>btnOutdirbrow</tabstop>
   <tabstop>cbxDTM</tabstop>
   <tabstop>cbxLoopHeight</tabstop>
   <tabstop>cbxMag</tabstop>
@@ -656,7 +656,7 @@
   <tabstop>rbnDirect</tabstop>
   <tabstop>rbnRadar</tabstop>
   <tabstop>lstAvailCh</tabstop>
-  <tabstop>lstChannels</tabstop>
+  <tabstop>lstSelCh</tabstop>
   <tabstop>btnAddCh</tabstop>
   <tabstop>btnRemCh</tabstop>
   <tabstop>cbxLine</tabstop>
@@ -738,7 +738,7 @@
   <connection>
    <sender>rbnMultifile</sender>
    <signal>toggled(bool)</signal>
-   <receiver>btnOtdirbrow</receiver>
+   <receiver>btnOutdirbrow</receiver>
    <slot>setEnabled(bool)</slot>
    <hints>
     <hint type="sourcelabel">
