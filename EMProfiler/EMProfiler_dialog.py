@@ -25,11 +25,14 @@ import numpy as np
 import matplotlib.pyplot as plot
 import csv
 import os
+import subprocess
 import math
 from matplotlib.backends.backend_pdf import PdfPages
 import sys
+import threading
 
-from PyQt4 import QtGui, uic
+from PyQt4 import QtGui, uic, QtCore
+from PyQt4.QtCore import QObject
 sys.excepthook = sys.__excepthook__
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'EMProfiler_dialog_base.ui'))
@@ -50,6 +53,7 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.datafile = None
         self.delimiter = "comma"
         self.headerdict = {}
+        self.lineCount = 0
          #initialise parameters THIS MAY NOW BE OBSOLETE
         self.outfilepath = None
         self.outfileDir = None
@@ -114,15 +118,21 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.chkLoopheight.toggled.connect(lambda:self.setVariables(self.profiler, "plotLoopheight", self.chkLoopheight.isChecked()))
         self.chkHilite.toggled.connect(lambda:self.setVariables(self.profiler, "hiliteCh", self.chkHilite.isChecked()))
         self.rbnRadar.toggled.connect(lambda:self.setVariables(self.profiler, "heightfromAltimeter", self.rbnRadar.isChecked()))
+        self.sbxHilite.valueChanged.connect(lambda: self.setVariables(self.profiler, "hilitenchan", self.sbxHilite.value()))
+        
+        #listen for signals
+        self.profiler.profilesStarted.connect(self.startProgress)
+        self.profiler.profileCompleted.connect(self.updateProgress)
+        self.profiler.numberofLines.connect(self.setNumberLines)
         
     def loadInfo(self):
-
+        self.resetGUI()
         #open and read header data
         csvfile = open(self.datafile, 'rb')
         if self.delimiter == "comma":
             reader = csv.reader(csvfile)
         else:
-            reader = csv.reader(csvfile, delimiter=" ")
+            reader = csv.reader(csvfile, delimiter=" ", skipinitialspace=True)
         header = reader.next()
         headerdict = {}
         i=0
@@ -141,6 +151,39 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
             for tars in needsheaders:
                 tars.addItem(keys)
                 
+    def resetGUI(self):
+        #reset gui elements 
+        self.lstAvailCh.clear()
+        self.lstSelCh.clear()
+        self.sbxHilite.setValue(5)
+        self.cbxHicol.addItems(['black', 'blue', 'cyan', 'green', 'magenta', 'red', 'yellow'])
+        self.cbxHicol.setCurrentIndex(5)
+        self.cbxLinecol.addItems(['black', 'blue', 'cyan', 'green', 'magenta', 'red', 'yellow'])
+        self.cbxLinecol.setCurrentIndex(0)
+        self.ledOutfile.clear()
+        self.ledOutdir.clear()
+        self.ledBasename.clear()
+        self.chkHilite.setChecked(True)
+        self.chkDTM.setChecked(False)
+        self.chkLoopheight.setChecked(False)
+        self.chkMag.setChecked(False)
+        self.ledTitle.clear()
+        self.ledXlab.clear()
+        self.ledYlab.clear()
+        
+        #self.profiler = ProfileMaker()
+        #reinstate some of the variables
+        #self.profiler.datafile = os.path.normpath(self.ledInput.text())
+        #if self.rbnComma.isChecked():
+        #    self.profiler.delimiter = "comma"
+        #else:
+        #    self.profiler.delimiter = "space"
+            
+        #self.profiler.singleoutput = self.rbnSingle.isChecked()
+        #Reset parameters to original state
+        self.profiler.resetParameters()
+        
+        
     def addChannels(self):
         self.listMover(self.lstAvailCh, self.lstSelCh)
         self.updateChannelList() 
@@ -214,6 +257,8 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
                 target.plotMag = value
             elif variable == "hiliteCh":
                 target.hiliteCh = value
+            elif variable == "hilitenchan":
+                target.hiliteNCh = value
             elif variable == "heightfromAltimeter":
                 target.heightfromAltimeter = value
                 
@@ -223,27 +268,50 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
     def showFileBrowser(self):
     #call up a file browser with filter for extension. 
 
-        self.ledInput.setText(QtGui.QFileDialog.getOpenFileName(self, 'Select EM Data file', "/", "*.csv"))
+        self.ledInput.setText(QtGui.QFileDialog.getOpenFileName(self, 'Select EM Data file', "/", "*.csv *.XYZ *.txt"))
     
     def showSaveFile(self, target):
         if target == "Single":
             self.ledOutfile.setText(QtGui.QFileDialog.getSaveFileName(self, 'Save File', "/", "*.pdf"))
         elif target == "Multi":
             self.ledOutdir.setText(QtGui.QFileDialog.getExistingDirectory(self, 'Select Project Directory', "/",QtGui.QFileDialog.ShowDirsOnly))
-            
+    
+    def setNumberLines(self, lines):
+        self.lineCount = lines
+        
+    def startProgress(self):
+        self.progressBar.reset()
+        self.progressBar.setMaximum(self.lineCount)
+        
+    def updateProgress(self, progressCount):
+        self.progressBar.setValue(progressCount)
+        
     def makeProfiles(self):
         #run the code to generate profiles
-        self.profiler.run()
+        #self.profiler.run()
+        #try creating a threading
+        procthread = myThread(self.profiler)
+        procthread.start()
     
-class ProfileMaker:
-
-    def __init__(self):
+class myThread(threading.Thread):
+    def __init__(self, promakerinst):
+        threading.Thread.__init__(self)
+        self.inst = promakerinst
+    def run(self):
+        self.inst.run()
         
+class ProfileMaker(QObject):
+
+    numberofLines = QtCore.pyqtSignal(int)
+    profileCompleted = QtCore.pyqtSignal(int)
+    profilesStarted = QtCore.pyqtSignal()
+    
+    def __init__(self):
+        super(ProfileMaker, self).__init__()
         #plotting parameters
         self.datafile = None
         self.delimiter = "comma"
         self.singleoutput = True
-        self.headerdict = {}
         self.outfilepath = None
         self.outfileDir = None
         self.outfileBase = None
@@ -263,6 +331,7 @@ class ProfileMaker:
         self.plotMag= False
         self.heightfromAltimeter = False
         self.hiliteCh = True
+        self.hiliteNCh = 5
         
         #data containers
         self.easting=None
@@ -275,21 +344,24 @@ class ProfileMaker:
         self.dtmMax = None
         self.magMax = None
         self.loopMax = None
+        self.lineList = []
         
         
     def run(self):
+        
         if self.singleoutput:
             self.savefile = PdfPages(self.outfilepath)
             
         self.findMax()
-            
-            
+        self.profilesStarted.emit()
+        
+        linecount = 0
         with open(self.datafile, "r") as csvfile:
             next(csvfile)
             if self.delimiter == "comma":
                 csvreader = csv.reader(csvfile)
             elif self.delimiter == "space":
-                csvreader = csv.reader(csvfile, delimiter=" ")
+                csvreader = csv.reader(csvfile, delimiter=" ", skipinitialspace=True)
             firstdata = csvreader.next()
             #get the first Line number
             self.currentline = firstdata[self.lineIdx]
@@ -328,12 +400,22 @@ class ProfileMaker:
                     self.plotProfiles()
                     self.currentline = row[self.lineIdx]
                     self.makeArrays(row)
-            
+                    linecount += 1
+                    self.profileCompleted.emit(linecount)
             #plot the last graph
             self.plotProfiles()
+            linecount += 1
+            self.profileCompleted.emit(linecount)
             
         if self.singleoutput:
             self.savefile.close()
+            #open pdf with default appplication
+            if sys.platform.startswith('darwin'):
+                subprocess.call(('open', self.outfilepath))
+            elif os.name == 'nt':
+                os.startfile(self.outfilepath)
+            elif os.name == 'posix':
+                subprocess.call(('xdg-open', self.outfilepath))
         
     def makeArrays(self, row):
         self.easting = np.array([float(row[self.coordIdx])])
@@ -370,28 +452,36 @@ class ProfileMaker:
         #set up main plot
         plot.subplots_adjust(left=0.0, hspace=0.3)
         ax1 = plot.subplot2grid((12,16), (0,0), rowspan=8, colspan=15)
-        title = 'Profile Line {}'.format(self.currentline)
+        title = '{} Line {}'.format(self.titleBase, self.currentline)
         plot.title(title)
         plot.yscale('symlog', linthreshy=0.1, subsy=[2,3,4,5,6,7,8,9])
         plot.autoscale(axis="x", tight=True)
         ylimit = 10**(math.ceil(math.log10(self.readingMax)))
         plot.ylim(ymax=ylimit)
-        plot.xlabel('Easting')
-        plot.ylabel('Amplitude)')
+        plot.xlabel(self.xLab)
+        plot.ylabel(self.yLab)
         #plot channel lines
         i=0
-        for n in self.amplitudes:
-            if i%5 ==0:
-                plot.plot(self.easting, n, linewidth=0.1, color='red')
-            else:
-                plot.plot(self.easting, n, linewidth=0.1, color='black')
-            i+= 1
+        if self.hiliteCh:
+            for n in self.amplitudes:
+                if i%self.hiliteNCh ==0:
+                    plot.plot(self.easting, n, linewidth=0.1, color=self.hiliteColour)
+                else:
+                    plot.plot(self.easting, n, linewidth=0.1, color=self.lineColour)
+                i+= 1
+        else:
+            for n in self.amplitudes:
+                plot.plot(self.easting, n, linewidth=0.1, color=self.lineColour)
+                i+= 1
+                
         box = ax1.get_position()
         ax1.set_position([box.x0, box.y0, box.width * 0.97, box.height])
 
         #set up secondary plot
         ax2 = plot.subplot2grid((12,16), (9,0), rowspan=4, colspan=15)
         plot.autoscale(axis="x", tight=True)
+        box = ax2.get_position()
+        ax2.set_position([box.x0, box.y0, box.width * 0.97, box.height])
         if self.plotDTM:
             plot.plot(self.easting, self.DTM, label="DTM", color="black")
             lim = self.dtmMax +100
@@ -404,19 +494,19 @@ class ProfileMaker:
             plot.ylabel("Elevation")
         if self.plotMag and (self.plotDTM or self.plotLoopheight):
             ax3 = ax2.twinx()
+            ax3.set_position([box.x0, box.y0, box.width * 0.97, box.height])
             ax3.plot(self.easting, self.mag, label="Magnetics", color="red")
+            ax3.autoscale(axis="x", tight=True)
             ax3.set_ylabel("Magnetics")
-            ax3.set_ylim(self.magMax)
+            ax3.set_ylim(top=self.magMax)
         if self.plotMag and not (self.plotDTM or self.plotLoopheight):
             plot.plot(self.easting, self.mag, label="Magnetics", color="red")
             plot.ylim(ymax=self.magMax)
             plot.ylabel("Magnetics")
             
-            
-        box = ax2.get_position()
-        ax2.set_position([box.x0, box.y0, box.width * 0.97, box.height])
-        ax2.legend(loc="lower left", bbox_to_anchor=(1,0.5))
-        
+
+        ax2.legend(loc="lower left", bbox_to_anchor=(1.05,1), frameon=False, fontsize=9)
+        ax3.legend(loc="lower left", bbox_to_anchor=(1.05,0.94), frameon=False, fontsize=9)
         #add text to figure
         plot.figtext(0.83,0.85, "System: VTEM \nSurvey By: Geotech Airborne\nDate: March 2009\nLocation: Koppany", size=7)
         
@@ -425,15 +515,20 @@ class ProfileMaker:
             self.savefile.savefig(bbox_inches="tight", pad_inches=0.5, )
         else:
             #save to individual pdfs
-            savepath = os.path.normpath(r"C:\Temp\EM Profile Line {}.pdf".format(self.currentline))
+            savepath = os.path.normpath(r"{}{} Line {}.pdf".format(self.outfileDir, self.outfileBase, self.currentline))
             plot.savefig(savepath, bbox_inches="tight", pad_inches=0.5)
         
     def findMax(self):
-        
+        self.lineList=[]
         with open(self.datafile, "r") as csvfile:
             next(csvfile)
-            csvreader = csv.reader(csvfile)
+            if self.delimiter == "comma":
+                csvreader = csv.reader(csvfile)
+            elif self.delimiter == "space":
+                csvreader = csv.reader(csvfile, delimiter=" ", skipinitialspace=True)
             for row in csvreader:
+                #print row
+            
                 channels = self.convertChannels([row[i] for i in self.channelIdx])
                 val = max(channels)[0]
                 if val > self.readingMax:
@@ -450,6 +545,52 @@ class ProfileMaker:
                     lphVal = float(row[self.loopheightIdx])
                     if lphVal > self.loopMax:
                         self.loopMax = lphVal
-                  
+                        
+                #make a list of unique line ids
+                
+                try:
+                    self.lineList.index(row[self.lineIdx])
+                except ValueError:
+                    self.lineList.append(row[self.lineIdx])
+                    
+                    
             csvfile.close()
+            self.numberofLines.emit(len(self.lineList))
+            
+    def resetParameters(self):
+    #resets the parameters that are involved with plotting, to allow for fresh start.
+    #does not include input file parameters and output style
+        self.outfilepath = None
+        self.outfileDir = None
+        self.outfileBase = None
+        self.lineIdx = None
+        self.coordIdx = None
+        self.channelIdx = []
+        self.DTMIdx = None
+        self.loopheightIdx = None
+        self.magIdx = None
+        self.hiliteColour = "red"
+        self.lineColour = "black"
+        self.titleBase = None
+        self.yLab = None
+        self.xLab = None
+        self.plotDTM = False
+        self.plotLoopheight = False
+        self.plotMag= False
+        self.heightfromAltimeter = False
+        self.hiliteCh = True
+        self.hiliteNCh = 5
         
+        #data containers
+        self.easting=None
+        self.amplitudes = None
+        self.DTM = None
+        self.mag = None
+        self.loopHeight = None
+        self.currentline= None
+        self.readingMax = None
+        self.dtmMax = None
+        self.magMax = None
+        self.loopMax = None
+        self.lineList = []
+
