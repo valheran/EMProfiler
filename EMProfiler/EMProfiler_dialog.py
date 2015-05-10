@@ -30,6 +30,7 @@ import math
 from matplotlib.backends.backend_pdf import PdfPages
 import sys
 import threading
+import textwrap
 
 from PyQt4 import QtGui, uic, QtCore
 from PyQt4.QtCore import QObject
@@ -87,6 +88,7 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.cbxHicol.setCurrentIndex(5)
         self.cbxLinecol.addItems(['black', 'blue', 'cyan', 'green', 'magenta', 'red', 'yellow'])
         self.cbxLinecol.setCurrentIndex(0)
+        self.plainTextEdit.setPlainText("System:\nSurvey By:\nDate:\nLocation\nComment:")
         
         #link up buttons
         self.btnInpBrow.clicked.connect(self.showFileBrowser)
@@ -119,12 +121,13 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         self.chkHilite.toggled.connect(lambda:self.setVariables(self.profiler, "hiliteCh", self.chkHilite.isChecked()))
         self.rbnRadar.toggled.connect(lambda:self.setVariables(self.profiler, "heightfromAltimeter", self.rbnRadar.isChecked()))
         self.sbxHilite.valueChanged.connect(lambda: self.setVariables(self.profiler, "hilitenchan", self.sbxHilite.value()))
+        self.plainTextEdit.textChanged.connect(lambda: self.setVariables(self.profiler, "commentstring", self.plainTextEdit.toPlainText()))
         
         #listen for signals
         self.profiler.profilesStarted.connect(self.startProgress)
         self.profiler.profileCompleted.connect(self.updateProgress)
         self.profiler.numberofLines.connect(self.setNumberLines)
-        
+
     def loadInfo(self):
         self.resetGUI()
         #open and read header data
@@ -261,6 +264,8 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
                 target.hiliteNCh = value
             elif variable == "heightfromAltimeter":
                 target.heightfromAltimeter = value
+            elif variable == "commentstring":
+                target.commentstring = value
                 
         except ValueError:
             pass
@@ -292,6 +297,7 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         #try creating a threading
         procthread = myThread(self.profiler)
         procthread.start()
+        
     
 class myThread(threading.Thread):
     def __init__(self, promakerinst):
@@ -332,6 +338,7 @@ class ProfileMaker(QObject):
         self.heightfromAltimeter = False
         self.hiliteCh = True
         self.hiliteNCh = 5
+        self.commentstring = None
         
         #data containers
         self.easting=None
@@ -348,7 +355,6 @@ class ProfileMaker(QObject):
         
         
     def run(self):
-        
         if self.singleoutput:
             self.savefile = PdfPages(self.outfilepath)
             
@@ -446,6 +452,7 @@ class ProfileMaker(QObject):
             return
         
     def plotProfiles(self):
+        
         #set up figure
         plot.clf()
         plot.figure(figsize=(16.5, 11.7))
@@ -499,6 +506,7 @@ class ProfileMaker(QObject):
             ax3.autoscale(axis="x", tight=True)
             ax3.set_ylabel("Magnetics")
             ax3.set_ylim(top=self.magMax)
+            ax3.legend(loc="lower left", bbox_to_anchor=(1.05,0.94), frameon=False, fontsize=9)
         if self.plotMag and not (self.plotDTM or self.plotLoopheight):
             plot.plot(self.easting, self.mag, label="Magnetics", color="red")
             plot.ylim(ymax=self.magMax)
@@ -506,17 +514,24 @@ class ProfileMaker(QObject):
             
 
         ax2.legend(loc="lower left", bbox_to_anchor=(1.05,1), frameon=False, fontsize=9)
-        ax3.legend(loc="lower left", bbox_to_anchor=(1.05,0.94), frameon=False, fontsize=9)
+        
         #add text to figure
-        plot.figtext(0.83,0.85, "System: VTEM \nSurvey By: Geotech Airborne\nDate: March 2009\nLocation: Koppany", size=7)
+        splitstring = self.commentstring.splitlines()
+        newstring = []
+        for n in splitstring:
+            a = textwrap.wrap(n,30)
+            newstring.extend(a)
+        ctext = "\n".join(newstring)
+        plot.figtext(0.83,0.85, ctext, size=7)
+        #plot.figtext(0.83,0.85, "System: VTEM \nSurvey By: Geotech Airborne\nDate: March 2009\nLocation: Koppany", size=7)
         
         if self.singleoutput:
             #save to single pdf
-            self.savefile.savefig(bbox_inches="tight", pad_inches=0.5, )
+            self.savefile.savefig(bbox_inches="tight", pad_inches=0.4 )
         else:
             #save to individual pdfs
             savepath = os.path.normpath(r"{}{} Line {}.pdf".format(self.outfileDir, self.outfileBase, self.currentline))
-            plot.savefig(savepath, bbox_inches="tight", pad_inches=0.5)
+            plot.savefig(savepath, bbox_inches="tight", pad_inches=0.4)
         
     def findMax(self):
         self.lineList=[]
@@ -593,4 +608,5 @@ class ProfileMaker(QObject):
         self.magMax = None
         self.loopMax = None
         self.lineList = []
+
 
