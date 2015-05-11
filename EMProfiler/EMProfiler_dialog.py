@@ -293,10 +293,10 @@ class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
         
     def makeProfiles(self):
         #run the code to generate profiles
-        #self.profiler.run()
+        self.profiler.run()
         #try creating a threading
-        procthread = myThread(self.profiler)
-        procthread.start()
+        #procthread = myThread(self.profiler)
+        #procthread.start()
         
     
 class myThread(threading.Thread):
@@ -338,7 +338,7 @@ class ProfileMaker(QObject):
         self.heightfromAltimeter = False
         self.hiliteCh = True
         self.hiliteNCh = 5
-        self.commentstring = None
+        self.commentstring = "System:\nSurvey By:\nDate:\nLocation\nComment:"
         
         #data containers
         self.easting=None
@@ -355,10 +355,12 @@ class ProfileMaker(QObject):
         
         
     def run(self):
+        #print "run started"
         if self.singleoutput:
             self.savefile = PdfPages(self.outfilepath)
             
         self.findMax()
+        print "find max complete"
         self.profilesStarted.emit()
         
         linecount = 0
@@ -386,26 +388,53 @@ class ProfileMaker(QObject):
                 #rint float(row[0])
                 #return
                 if line == self.currentline:
-                    self.easting = np.append(self.easting, [float(row[self.coordIdx])])
+                    #if there is no location data then a row cannot be used
+                    try:
+                        self.easting = np.append(self.easting, [float(row[self.coordIdx])])
+                    except ValueError:
+                        #if fails due to blank data ADD LOGGING
+                        continue
                     #get the requested channel data using list comprehension
                     channels = self.convertChannels([row[i] for i in self.channelIdx])
                     self.amplitudes = np.append(self.amplitudes, channels, axis=1)
                     
                     #populate optional profiles if requested
                     if self.plotDTM:
-                        self.DTM = np.append(self.DTM, [float(row[self.DTMIdx])])
+                        try:
+                            self.DTM = np.append(self.DTM, [float(row[self.DTMIdx])])
+                        except ValueError:  
+                            #if fails due to blank data, set to 0 ADD LOGGING
+                            self.DTM = np.append(self.DTM, [0])
                     if self.plotLoopheight:
                         if self.heightfromAltimeter:
-                            height = (float(row[self.loopheightIdx])) + (float(row[self.DTMIdx]))
-                            self.loopHeight = np.append(self.loopHeight, [height])
+                            try:
+                                height = (float(row[self.loopheightIdx])) + (float(row[self.DTMIdx]))
+                                self.loopHeight = np.append(self.loopHeight, [height])
+                            except ValueError:
+                                #if fails due to blank data, set to 0 ADD LOGGING
+                                self.loopHeight = np.append(self.loopHeight, [0])
                         else:
-                            self.loopHeight = np.append(self.loopHeight, [float(row[self.loopheightIdx])])
+                            try:
+                                self.loopHeight = np.append(self.loopHeight, [float(row[self.loopheightIdx])])
+                            except ValueError:
+                            #if fails due to blank data, set to 0 ADD LOGGING
+                                self.loopHeight = np.append(self.loopHeight, [0])
                     if self.plotMag:
-                        self.mag = np.append(self.mag, [float(row[self.magIdx])])
+                        try:
+                            self.mag = np.append(self.mag, [float(row[self.magIdx])])
+                        except ValueError:
+                            #if fails due to blank, give an arbitrary low number   ADD LOGGING
+                            self.mag = np.append(self.mag, [self.magMax/1.5])
                 else:
+                    
+                    if not self.makeArrays(row):
+                        continue
+                        #bypass plotting and updating line if new arrary is unsuccessful due to
+                        #blank coords
                     self.plotProfiles()
                     self.currentline = row[self.lineIdx]
-                    self.makeArrays(row)
+                    
+                        
                     linecount += 1
                     self.profileCompleted.emit(linecount)
             #plot the last graph
@@ -424,35 +453,65 @@ class ProfileMaker(QObject):
                 subprocess.call(('xdg-open', self.outfilepath))
         
     def makeArrays(self, row):
-        self.easting = np.array([float(row[self.coordIdx])])
-        #get the requested channel data using list comprehension
+        try:
+            self.easting = np.array([float(row[self.coordIdx])])
+        except ValueError:
+            return False
+        #get the requested channel data using list comprehension Blank errors handled in convert channels
         channellist =[row[i] for i in self.channelIdx]
         channellistF = self.convertChannels(channellist)
         self.amplitudes = np.array(channellistF)
         
         #setup DTM data if requested
         if self.plotDTM:
-            self.DTM = np.array([float(row[self.DTMIdx])])
+            try:
+                self.DTM = np.array([float(row[self.DTMIdx])])
+            except ValueError:
+                self.DTM = np.array([0])
         #setup loop height data if requested
         if self.plotLoopheight:
-            self.loopHeight = np.array([float(row[self.loopheightIdx])])
+                          
+            if self.heightfromAltimeter.isChecked():
+                try:
+                    height = (float(row[self.loopheightIdx])) + (float(row[self.DTMIdx]))
+                    self.loopHeight = np.array([height])
+                except ValueError:
+                    #if fails due to blank data, set to 0 ADD LOGGING
+                    self.loopHeight = np.array([0])
+            else:
+                try:
+                    self.loopHeight = np.array([float(row[self.loopheightIdx])])
+                except ValueError:
+                #if fails due to blank data, set to 0 ADD LOGGING
+                    self.loopHeight = np.array([0])
         #setup DTM data if requested
         if self.plotMag:
-            self.mag = np.array([float(row[self.magIdx])])
+            try:
+                self.mag = np.array([float(row[self.magIdx])])
+            except value:
+                self.mag = np.array([0])
+        return True
         
     def convertChannels(self, channelList):
         #convert the string list of channels into a list of list of floats
+        #print channelList
         listF=[]
         try:
             for ch in channelList:
-                listF.append([float(ch)])
+                try:
+                    listF.append([float(ch)])
+                except ValueError:
+                    #convert null into arbitrary negative value
+                    listF.append([-0.05])
+                    #add in some info logging here!!!!
             return listF
         except ValueError:
+        #this outer level of error catching may now be redundant
             print "ch value", ch
             return
         
     def plotProfiles(self):
-        
+        #print "plot started"
         #set up figure
         plot.clf()
         plot.figure(figsize=(16.5, 11.7))
@@ -465,9 +524,12 @@ class ProfileMaker(QObject):
         plot.autoscale(axis="x", tight=True)
         ylimit = 10**(math.ceil(math.log10(self.readingMax)))
         plot.ylim(ymax=ylimit)
-        plot.xlabel(self.xLab)
-        plot.ylabel(self.yLab)
+        xlabel = "{}".format(self.xLab)
+        ylabel = "{}".format(self.yLab)
+        plot.xlabel(xlabel)
+        plot.ylabel(ylabel)
         #plot channel lines
+        #print "plotting lines"
         i=0
         if self.hiliteCh:
             for n in self.amplitudes:
@@ -485,6 +547,7 @@ class ProfileMaker(QObject):
         ax1.set_position([box.x0, box.y0, box.width * 0.97, box.height])
 
         #set up secondary plot
+        #print "main plot finished"
         ax2 = plot.subplot2grid((12,16), (9,0), rowspan=4, colspan=15)
         plot.autoscale(axis="x", tight=True)
         box = ax2.get_position()
@@ -512,7 +575,7 @@ class ProfileMaker(QObject):
             plot.ylim(ymax=self.magMax)
             plot.ylabel("Magnetics")
             
-
+        #print "plotting legend"
         ax2.legend(loc="lower left", bbox_to_anchor=(1.05,1), frameon=False, fontsize=9)
         
         #add text to figure
@@ -549,15 +612,24 @@ class ProfileMaker(QObject):
                 if val > self.readingMax:
                     self.readingMax = val
                 if self.plotDTM:
-                    dtmVal = float(row[self.DTMIdx])
+                    try:
+                        dtmVal = float(row[self.DTMIdx])
+                    except ValueError:
+                        dtmVal = 0
                     if dtmVal > self.dtmMax:
                         self.dtmMax = dtmVal
                 if self.plotMag:
-                    magVal = float(row[self.magIdx])
+                    try:
+                        magVal = float(row[self.magIdx])
+                    except ValueError:
+                        magVal=0
                     if magVal > self.magMax:
                         self.magMax = magVal
                 if self.plotLoopheight:
-                    lphVal = float(row[self.loopheightIdx])
+                    try:
+                        lphVal = float(row[self.loopheightIdx])
+                    except ValueError:
+                        lphVal=0
                     if lphVal > self.loopMax:
                         self.loopMax = lphVal
                         
