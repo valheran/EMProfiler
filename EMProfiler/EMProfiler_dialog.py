@@ -31,12 +31,15 @@ from matplotlib.backends.backend_pdf import PdfPages
 import sys
 import threading
 import textwrap
+import logging
 
 from PyQt4 import QtGui, uic, QtCore
 from PyQt4.QtCore import QObject
-sys.excepthook = sys.__excepthook__
+#sys.excepthook = sys.__excepthook__
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'EMProfiler_dialog_base.ui'))
+
+
 
 
 class EMProfilerDialog(QtGui.QDialog, FORM_CLASS):
@@ -315,6 +318,8 @@ class ProfileMaker(QObject):
     def __init__(self):
         super(ProfileMaker, self).__init__()
         #plotting parameters
+        LOGFILE = os.path.join(os.path.dirname(__file__), "eventlog.txt")
+        logging.basicConfig(filename = LOGFILE, level=logging.INFO, format='%(asctime)s %(message)s')
         self.datafile = None
         self.delimiter = "comma"
         self.singleoutput = True
@@ -338,7 +343,7 @@ class ProfileMaker(QObject):
         self.heightfromAltimeter = False
         self.hiliteCh = True
         self.hiliteNCh = 5
-        self.commentstring = "System:\nSurvey By:\nDate:\nLocation\nComment:"
+        self.commentstring = "System:\nSurvey By:\nDate:\nLocation:\nComment:"
         
         #data containers
         self.easting=None
@@ -352,10 +357,12 @@ class ProfileMaker(QObject):
         self.magMax = None
         self.loopMax = None
         self.lineList = []
+        self.readerRowNumber = 0
         
         
     def run(self):
         #print "run started"
+        logging.info("run started")
         if self.singleoutput:
             self.savefile = PdfPages(self.outfilepath)
             
@@ -370,14 +377,16 @@ class ProfileMaker(QObject):
                 csvreader = csv.reader(csvfile)
             elif self.delimiter == "space":
                 csvreader = csv.reader(csvfile, delimiter=" ", skipinitialspace=True)
+            self.readerRowNumber = 0
             firstdata = csvreader.next()
+            self.readerRowNumber +=1
             #get the first Line number
             self.currentline = firstdata[self.lineIdx]
             #setup arrays
             self.makeArrays(firstdata)
                        
             for row in csvreader:
-            
+                self.readerRowNumber += 1
                 if self.plotLoopheight:
                     if self.heightfromAltimeter:
                         if not self.plotDTM:
@@ -393,9 +402,11 @@ class ProfileMaker(QObject):
                         self.easting = np.append(self.easting, [float(row[self.coordIdx])])
                     except ValueError:
                         #if fails due to blank data ADD LOGGING
+                        logging.warning("null location value, line {}".format(self.readerRowNumber))
                         continue
                     #get the requested channel data using list comprehension
                     channels = self.convertChannels([row[i] for i in self.channelIdx])
+                    #logging.debug("channel list for appending {}".format(channels))
                     self.amplitudes = np.append(self.amplitudes, channels, axis=1)
                     
                     #populate optional profiles if requested
@@ -404,6 +415,7 @@ class ProfileMaker(QObject):
                             self.DTM = np.append(self.DTM, [float(row[self.DTMIdx])])
                         except ValueError:  
                             #if fails due to blank data, set to 0 ADD LOGGING
+                            logging.warning("blank DTM value in row {}. Set to 0".format(self.readerRowNumber))
                             self.DTM = np.append(self.DTM, [0])
                     if self.plotLoopheight:
                         if self.heightfromAltimeter:
@@ -413,25 +425,37 @@ class ProfileMaker(QObject):
                             except ValueError:
                                 #if fails due to blank data, set to 0 ADD LOGGING
                                 self.loopHeight = np.append(self.loopHeight, [0])
+                                logging.warning("blank loopheight value in row {}. Set to 0. Check DTM and Altimeter".format(self.readerRowNumber))
                         else:
                             try:
                                 self.loopHeight = np.append(self.loopHeight, [float(row[self.loopheightIdx])])
                             except ValueError:
                             #if fails due to blank data, set to 0 ADD LOGGING
                                 self.loopHeight = np.append(self.loopHeight, [0])
+                                logging.warning("blank loop heightvalue in row {}. Set to 0".format(self.readerRowNumber))
                     if self.plotMag:
                         try:
                             self.mag = np.append(self.mag, [float(row[self.magIdx])])
                         except ValueError:
                             #if fails due to blank, give an arbitrary low number   ADD LOGGING
                             self.mag = np.append(self.mag, [self.magMax/1.5])
+                            logging.warning("blank magnetic value in row {}. Set to 0".format(self.readerRowNumber))
                 else:
-                    
-                    if not self.makeArrays(row):
+                    try:
+                        #test if currentline can make valid array
+                        test = float(row[self.coordIdx])
+                        canContinue = True
+                    except ValueError:
+                        canContinue = False
+                        logging.warning("null location value, line {}".format(self.readerRowNumber))
+                    if not canContinue:
+                        
                         continue
-                        #bypass plotting and updating line if new arrary is unsuccessful due to
+                        logging.debug("makeArrays would fail skipped plotting profiles. currentline = {}".format(self.currentline))
+                        #bypass plotting and updating line if new array is unsuccessful due to
                         #blank coords
                     self.plotProfiles()
+                    self.makeArrays(row)
                     self.currentline = row[self.lineIdx]
                     
                         
@@ -451,12 +475,15 @@ class ProfileMaker(QObject):
                 os.startfile(self.outfilepath)
             elif os.name == 'posix':
                 subprocess.call(('xdg-open', self.outfilepath))
+        logging.info("run completed, {} profiles generated".format(linecount))
         
     def makeArrays(self, row):
         try:
             self.easting = np.array([float(row[self.coordIdx])])
         except ValueError:
-            return False
+            logging.debug("makeArrays location array failed")
+            logging.warning("null location value, line {}".format(self.readerRowNumber))
+            return
         #get the requested channel data using list comprehension Blank errors handled in convert channels
         channellist =[row[i] for i in self.channelIdx]
         channellistF = self.convertChannels(channellist)
@@ -468,28 +495,32 @@ class ProfileMaker(QObject):
                 self.DTM = np.array([float(row[self.DTMIdx])])
             except ValueError:
                 self.DTM = np.array([0])
+                logging.warning("blank DTM value in row {}. Set to 0".format(self.readerRowNumber))
         #setup loop height data if requested
         if self.plotLoopheight:
                           
-            if self.heightfromAltimeter.isChecked():
+            if self.heightfromAltimeter:
                 try:
                     height = (float(row[self.loopheightIdx])) + (float(row[self.DTMIdx]))
                     self.loopHeight = np.array([height])
                 except ValueError:
                     #if fails due to blank data, set to 0 ADD LOGGING
+                    logging.warning("blank loopheight value in row {}. Set to 0. Check DTM and Altimeter".format(self.readerRowNumber))
                     self.loopHeight = np.array([0])
             else:
                 try:
                     self.loopHeight = np.array([float(row[self.loopheightIdx])])
                 except ValueError:
                 #if fails due to blank data, set to 0 ADD LOGGING
+                    logging.warning("blank loop heightvalue in row {}. Set to 0".format(self.readerRowNumber))
                     self.loopHeight = np.array([0])
-        #setup DTM data if requested
+        #setup magnetic data if requested
         if self.plotMag:
             try:
                 self.mag = np.array([float(row[self.magIdx])])
             except value:
-                self.mag = np.array([0])
+                self.mag = np.array([self.magMax/1.5])
+                logging.warning("blank magnetic value in row {}. Set to 0".format(self.readerRowNumber))
         return True
         
     def convertChannels(self, channelList):
@@ -503,6 +534,7 @@ class ProfileMaker(QObject):
                 except ValueError:
                     #convert null into arbitrary negative value
                     listF.append([-0.05])
+                    logging.warning("blank channel value in row {}. Set to -0.05".format(self.readerRowNumber))
                     #add in some info logging here!!!!
             return listF
         except ValueError:
@@ -513,6 +545,7 @@ class ProfileMaker(QObject):
     def plotProfiles(self):
         #print "plot started"
         #set up figure
+        #logging.debug("plotting line {}. data first rows {}".format(self.currentline, self.easting[1:50]))
         plot.clf()
         plot.figure(figsize=(16.5, 11.7))
         #set up main plot
@@ -559,8 +592,8 @@ class ProfileMaker(QObject):
             plot.ylabel("Elevation")
         if self.plotLoopheight:
             plot.plot(self.easting, self.loopHeight, label="Loop", color="blue")
-            lim = self.loopMax + 50
-            plot.ylim(ymax=lim)
+            #lim = self.loopMax + 50
+            #plot.ylim(ymax=lim)
             plot.ylabel("Elevation")
         if self.plotMag and (self.plotDTM or self.plotLoopheight):
             ax3 = ax2.twinx()
@@ -626,13 +659,21 @@ class ProfileMaker(QObject):
                     if magVal > self.magMax:
                         self.magMax = magVal
                 if self.plotLoopheight:
-                    try:
-                        lphVal = float(row[self.loopheightIdx])
-                    except ValueError:
-                        lphVal=0
-                    if lphVal > self.loopMax:
-                        self.loopMax = lphVal
-                        
+                    if self.heightfromAltimeter:
+                        try:
+                            lphVal = (float(row[self.loopheightIdx])) + (float(row[self.DTMIdx]))
+                        except ValueError:
+                            lphVal=0
+                        if lphVal > self.loopMax:
+                            self.loopMax = lphVal
+                    else:
+                        try:
+                            lphVal = float(row[self.loopheightIdx])
+                        except ValueError:
+                            lphVal=0
+                        if lphVal > self.loopMax:
+                            self.loopMax = lphVal
+
                 #make a list of unique line ids
                 
                 try:
@@ -640,7 +681,7 @@ class ProfileMaker(QObject):
                 except ValueError:
                     self.lineList.append(row[self.lineIdx])
                     
-                    
+            print "mag max", self.magMax, "dtmMax", self.dtmMax, "loop max", self.loopMax
             csvfile.close()
             self.numberofLines.emit(len(self.lineList))
             
