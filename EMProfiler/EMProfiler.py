@@ -59,7 +59,7 @@ class EMProfiler:
                 QCoreApplication.installTranslator(self.translator)
 
         # Create the dialog (after translation) and keep reference
-        self.dlg = EMProfilerDialog()
+        
 
         # Declare instance attributes
         self.actions = []
@@ -182,6 +182,7 @@ class EMProfiler:
     def run(self):
         """Run method that performs all the real work"""
         # show the dialog
+        self.dlg = EMProfilerDialog()
         self.dlg.show()
         # Run the dialog event loop
         result = self.dlg.exec_()
